@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -10,7 +11,8 @@ import (
 )
 
 type ConnectionPool struct {
-	conn *amqp.Connection
+	conn      []*amqp.Connection
+	connCount int
 
 	MaxSize  int
 	IdleNum  int
@@ -19,13 +21,23 @@ type ConnectionPool struct {
 	AddNew   chan *amqp.Channel
 }
 
-func NewPool(conn *amqp.Connection, maxSize int, initChanNumber int) *ConnectionPool {
+func NewPool(url string, maxConn int, maxSize int, initChanNumber int) *ConnectionPool {
 	pool := &ConnectionPool{
-		conn:     conn,
 		MaxSize:  maxSize,
 		IdleNum:  initChanNumber,
 		AddNew:   make(chan *amqp.Channel),
 		channels: make(map[*amqp.Channel]int),
+	}
+
+	for i := 0; i < pool.connCount; i++ {
+
+		c, err := amqp.Dial(url)
+		if err != nil {
+			panic(err)
+		}
+
+		pool.conn = append(pool.conn, c)
+
 	}
 
 	for i := 0; i < pool.IdleNum; i++ {
@@ -41,16 +53,16 @@ func (cp *ConnectionPool) Get() *amqp.Channel {
 	var popChan *amqp.Channel
 
 	cp.Mu.Lock()
-	defer cp.Mu.Unlock()
-	
 	if cp.IdleNum > 0 {
 		for ch := range cp.channels {
 			popChan = ch
 			delete(cp.channels, ch)
 			cp.IdleNum--
+
 			break
 		}
 
+		cp.Mu.Unlock()
 		return popChan
 	}
 
@@ -60,10 +72,12 @@ func (cp *ConnectionPool) Get() *amqp.Channel {
 	select {
 	case ch := <-cp.AddNew:
 		popChan = ch
+		cp.Mu.Unlock()
 		return popChan
 
 	case <-ctx.Done():
 		popChan = cp.New()
+		cp.Mu.Unlock()
 		return popChan
 	}
 
@@ -125,11 +139,24 @@ func (cp *ConnectionPool) save(channels [2]*amqp.Channel) {
 
 func (cp *ConnectionPool) New() *amqp.Channel {
 
-	ch, err := cp.conn.Channel()
+	ch, err := cp.getConn().Channel()
 	if err != nil {
 		panic(fmt.Errorf("error in creating new channel in rabbitMQ: %v", err))
 	}
 
 	return ch
 
+}
+
+func (cp *ConnectionPool) getConn() *amqp.Connection {
+	index := rand.Intn(cp.connCount)
+
+	conn := cp.conn[index]
+	if conn.IsClosed(){
+		cp.Mu.Lock()
+		cp.conn = append(cp.conn, conn)
+		cp.Mu.Unlock()
+	}
+
+	return conn
 }
