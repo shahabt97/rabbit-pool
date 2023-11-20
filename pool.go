@@ -8,9 +8,11 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/samber/lo"
 )
 
 type ConnectionPool struct {
+	url       string
 	conn      []*amqp.Connection
 	connCount int
 
@@ -23,11 +25,12 @@ type ConnectionPool struct {
 
 func NewPool(url string, maxConn int, maxSize int, initChanNumber int) *ConnectionPool {
 	pool := &ConnectionPool{
-		MaxSize:  maxSize,
+		url:       url,
+		MaxSize:   maxSize,
 		connCount: maxConn,
-		IdleNum:  initChanNumber,
-		AddNew:   make(chan *amqp.Channel),
-		channels: make(map[*amqp.Channel]int),
+		IdleNum:   initChanNumber,
+		AddNew:    make(chan *amqp.Channel),
+		channels:  make(map[*amqp.Channel]int),
 	}
 
 	for i := 0; i < pool.connCount; i++ {
@@ -153,9 +156,21 @@ func (cp *ConnectionPool) getConn() *amqp.Connection {
 	index := rand.Intn(cp.connCount)
 
 	conn := cp.conn[index]
-	if conn.IsClosed(){
+	if conn.IsClosed() {
 		cp.Mu.Lock()
-		cp.conn = append(cp.conn, conn)
+
+		cp.conn = lo.Filter[*amqp.Connection](cp.conn, func(item *amqp.Connection, index int) bool {
+			return item != conn
+		})
+
+		for len(cp.conn) < cp.connCount {
+			newConn, err := amqp.Dial(cp.url)
+			if err != nil {
+				panic(err)
+			}
+			cp.conn = append(cp.conn, newConn)
+		}
+
 		cp.Mu.Unlock()
 	}
 
