@@ -143,36 +143,74 @@ func (cp *ConnectionPool) save(channels [2]*amqp.Channel) {
 
 func (cp *ConnectionPool) New() *amqp.Channel {
 
-	ch, err := cp.getConn().Channel()
-	if err != nil {
-		panic(fmt.Errorf("error in creating new channel in rabbitMQ: %v", err))
-	}
+	var interval = 5
+	for {
 
-	return ch
+		ch, err := cp.getConn().Channel()
+		if err != nil {
+			time.Sleep(time.Duration(interval) * time.Second)
+			interval = interval * 2
+			if interval > 600 {
+				panic(fmt.Errorf("error in creating new channel in rabbitMQ: %v", err))
+			}
+			continue
+		}
+
+		return ch
+
+	}
 
 }
 
 func (cp *ConnectionPool) getConn() *amqp.Connection {
-	index := rand.Intn(cp.connCount)
 
-	conn := cp.conn[index]
-	if conn.IsClosed() {
+	var interval = 5
+	for {
+
 		cp.Mu.Lock()
 
-		cp.conn = lo.Filter[*amqp.Connection](cp.conn, func(item *amqp.Connection, index int) bool {
-			return item != conn
-		})
+		if len(cp.conn) == 0 {
+			cp.Mu.Unlock()
+			time.Sleep(time.Duration(interval) * time.Second)
+			interval *= 2
+			continue
+		}
 
-		for len(cp.conn) < cp.connCount {
-			newConn, err := amqp.Dial(cp.url)
-			if err != nil {
-				panic(err)
-			}
-			cp.conn = append(cp.conn, newConn)
+		index := rand.Intn(len(cp.conn))
+		conn := cp.conn[index]
+		if conn.IsClosed() {
+			go cp.createNewConn(conn)
+			cp.conn = lo.Filter[*amqp.Connection](cp.conn, func(item *amqp.Connection, index int) bool {
+				return item != conn
+			})
+			cp.Mu.Unlock()
+			continue
 		}
 
 		cp.Mu.Unlock()
+		return conn
+
 	}
 
-	return conn
+}
+
+func (cp *ConnectionPool) createNewConn(conn *amqp.Connection) {
+
+	var interval = 5
+	for {
+		newConn, err := amqp.Dial(cp.url)
+		if err != nil {
+			time.Sleep(time.Duration(interval) * time.Second)
+			interval *= 2
+			if interval > 40 {
+				panic(err)
+			}
+			continue
+		}
+		cp.Mu.Lock()
+		cp.conn = append(cp.conn, newConn)
+		cp.Mu.Unlock()
+		return
+	}
+
 }
