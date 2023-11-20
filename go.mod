@@ -1,4 +1,4 @@
-module github.com/shahabt97/rabbit-pool
+module github.com/shahabt97/rabbit-pool/v2
 
 go 1.21.0
 
