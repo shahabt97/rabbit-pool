@@ -24,6 +24,7 @@ type ConnectionPool struct {
 func NewPool(url string, maxConn int, maxSize int, initChanNumber int) *ConnectionPool {
 	pool := &ConnectionPool{
 		MaxSize:  maxSize,
+		connCount: maxConn,
 		IdleNum:  initChanNumber,
 		AddNew:   make(chan *amqp.Channel),
 		channels: make(map[*amqp.Channel]int),
