@@ -12,8 +12,8 @@ import (
 type ConnectionPool struct {
 	conn *amqp.Connection
 
-	MaxSize int
-	IdleNum int
+	MaxSize  int
+	IdleNum  int
 	channels map[*amqp.Channel]int
 	Mu       sync.Mutex
 	AddNew   chan *amqp.Channel
@@ -41,16 +41,16 @@ func (cp *ConnectionPool) Get() *amqp.Channel {
 	var popChan *amqp.Channel
 
 	cp.Mu.Lock()
+	defer cp.Mu.Unlock()
+	
 	if cp.IdleNum > 0 {
 		for ch := range cp.channels {
 			popChan = ch
 			delete(cp.channels, ch)
 			cp.IdleNum--
-
 			break
 		}
 
-		cp.Mu.Unlock()
 		return popChan
 	}
 
@@ -60,12 +60,10 @@ func (cp *ConnectionPool) Get() *amqp.Channel {
 	select {
 	case ch := <-cp.AddNew:
 		popChan = ch
-		cp.Mu.Unlock()
 		return popChan
 
 	case <-ctx.Done():
 		popChan = cp.New()
-		cp.Mu.Unlock()
 		return popChan
 	}
 
