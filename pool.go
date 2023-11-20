@@ -12,9 +12,10 @@ import (
 )
 
 type ConnectionPool struct {
-	url       string
-	conn      []*amqp.Connection
-	connCount int
+	url             string
+	conn            []*amqp.Connection
+	connectionMutex sync.Mutex
+	connCount       int
 
 	MaxSize  int
 	IdleNum  int
@@ -167,10 +168,10 @@ func (cp *ConnectionPool) getConn() *amqp.Connection {
 	var interval = 5
 	for {
 
-		cp.Mu.Lock()
+		cp.connectionMutex.Lock()
 
 		if len(cp.conn) == 0 {
-			cp.Mu.Unlock()
+			cp.connectionMutex.Unlock()
 			time.Sleep(time.Duration(interval) * time.Second)
 			interval *= 2
 			continue
@@ -183,11 +184,11 @@ func (cp *ConnectionPool) getConn() *amqp.Connection {
 			cp.conn = lo.Filter[*amqp.Connection](cp.conn, func(item *amqp.Connection, index int) bool {
 				return item != conn
 			})
-			cp.Mu.Unlock()
+			cp.connectionMutex.Unlock()
 			continue
 		}
 
-		cp.Mu.Unlock()
+		cp.connectionMutex.Unlock()
 		return conn
 
 	}
@@ -207,9 +208,9 @@ func (cp *ConnectionPool) createNewConn(conn *amqp.Connection) {
 			}
 			continue
 		}
-		cp.Mu.Lock()
+		cp.connectionMutex.Lock()
 		cp.conn = append(cp.conn, newConn)
-		cp.Mu.Unlock()
+		cp.connectionMutex.Unlock()
 		return
 	}
 
