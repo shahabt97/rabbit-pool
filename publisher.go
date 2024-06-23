@@ -9,15 +9,16 @@ import (
 )
 
 type Publisher struct {
-	Pool  *ConnectionPool
-	Queue string
+	Pool         *ConnectionPool
+	ExchangeName string
+	ExchangeKey  string
 }
 
-func NewPublisher(pool *ConnectionPool, queue string) (*Publisher, error) {
+func NewPublisher(pool *ConnectionPool, exchange, exType string, exchangeDurable bool) (*Publisher, error) {
 
 	publisher := &Publisher{Pool: pool}
 
-	err := publisher.DeclareQueue(queue)
+	err := publisher.DeclareExchange(exchange, exType, exchangeDurable)
 	if err != nil {
 		return nil, err
 	}
@@ -25,21 +26,22 @@ func NewPublisher(pool *ConnectionPool, queue string) (*Publisher, error) {
 	return publisher, nil
 }
 
-func (p *Publisher) DeclareQueue(q string) error {
-	
-	if q == "" {
-		return errors.New("no queue name has been specified")
+func (p *Publisher) DeclareExchange(name, exType string, durable bool) (err error) {
+
+	if name == "" {
+		return errors.New("no exchange name has been specified")
 	}
-	p.Queue = q
+	p.ExchangeName = name
 
 	ch := p.Pool.Get()
-	_, err := ch.QueueDeclare(
-		p.Queue,
-		true,  // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
+	err = ch.ExchangeDeclare(
+		p.ExchangeName,
+		exType,  // durable
+		durable, // delete when unused
+		false,   // exclusive
+		false,   // no-wait
+		false,
+		nil, // arguments
 	)
 	if !ch.IsClosed() {
 		go p.Pool.Put(ch)
@@ -53,16 +55,24 @@ func (p *Publisher) DeclareQueue(q string) error {
 
 }
 
-func (p *Publisher) NewPublish(body []byte, contentType string) error {
+func (p *Publisher) NewPublish(body []byte, contentType string, durable bool, timeout time.Duration) error {
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	var deliveryMode uint8
+	if durable {
+		deliveryMode = amqp.Persistent
+	} else {
+		deliveryMode = amqp.Transient
+	}
+
 	ch := p.Pool.Get()
-	err := ch.PublishWithContext(ctx, "", p.Queue, false, false, amqp.Publishing{
+
+	err := ch.PublishWithContext(ctx, p.ExchangeName, p.ExchangeKey, false, false, amqp.Publishing{
 		ContentType:  contentType,
 		Body:         body,
-		DeliveryMode: amqp.Persistent,
+		DeliveryMode: deliveryMode,
 	})
 
 	if !ch.IsClosed() {
@@ -70,7 +80,6 @@ func (p *Publisher) NewPublish(body []byte, contentType string) error {
 	}
 
 	if err != nil {
-
 		return err
 	}
 	return nil
