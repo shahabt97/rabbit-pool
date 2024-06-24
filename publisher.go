@@ -3,22 +3,21 @@ package rabbitmq
 import (
 	"context"
 	"errors"
-	"time"
-
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Publisher struct {
 	Pool         *ConnectionPool
-	ExchangeName string
-	ExchangeKey  string
+	exchangeName string
+	kind         string
+	exchangeKey  string
 }
 
-func NewPublisher(pool *ConnectionPool, exchange, exType string, exchangeDurable bool) (*Publisher, error) {
+func NewPublisher(pool *ConnectionPool, exchangeName, kind, exchangeKey string, durable bool) (*Publisher, error) {
 
-	publisher := &Publisher{Pool: pool}
+	publisher := &Publisher{Pool: pool, exchangeName: exchangeName, kind: kind, exchangeKey: exchangeKey}
 
-	err := publisher.DeclareExchange(exchange, exType, exchangeDurable)
+	err := publisher.DeclareExchange(durable)
 	if err != nil {
 		return nil, err
 	}
@@ -26,20 +25,19 @@ func NewPublisher(pool *ConnectionPool, exchange, exType string, exchangeDurable
 	return publisher, nil
 }
 
-func (p *Publisher) DeclareExchange(name, exType string, durable bool) (err error) {
+func (p *Publisher) DeclareExchange(durable bool) (err error) {
 
-	if name == "" {
+	if p.exchangeName == "" {
 		return errors.New("no exchange name has been specified")
 	}
-	p.ExchangeName = name
 
 	ch := p.Pool.Get()
 	err = ch.ExchangeDeclare(
-		p.ExchangeName,
-		exType,  // durable
-		durable, // delete when unused
-		false,   // exclusive
-		false,   // no-wait
+		p.exchangeName,
+		p.kind,  // kind
+		durable, // durable
+		false,
+		false,
 		false,
 		nil, // arguments
 	)
@@ -55,10 +53,7 @@ func (p *Publisher) DeclareExchange(name, exType string, durable bool) (err erro
 
 }
 
-func (p *Publisher) NewPublish(body []byte, contentType string, durable bool, timeout time.Duration) error {
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+func (p *Publisher) NewPublish(ctx context.Context, body []byte, contentType string, durable bool) error {
 
 	var deliveryMode uint8
 	if durable {
@@ -69,7 +64,7 @@ func (p *Publisher) NewPublish(body []byte, contentType string, durable bool, ti
 
 	ch := p.Pool.Get()
 
-	err := ch.PublishWithContext(ctx, p.ExchangeName, p.ExchangeKey, false, false, amqp.Publishing{
+	err := ch.PublishWithContext(ctx, p.exchangeName, p.exchangeKey, false, false, amqp.Publishing{
 		ContentType:  contentType,
 		Body:         body,
 		DeliveryMode: deliveryMode,
